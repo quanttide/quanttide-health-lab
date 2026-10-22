@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .labels import canonical
+from .labels import ASSISTANT_ACTORS, actor_of, canonical
 from .sanitize import scrub
 
 CST = timezone(timedelta(hours=8))
@@ -120,8 +120,47 @@ def build(annotations: list[dict], total_user_msgs: int, rest_pool_size: int,
     _source_table(L, "三、摩擦来源（烦、返工、失控感，按命中条数排序）", friction,
                   "看这一节：这些消耗的是耐性，不是体力。它们常是疲劳的上游。")
 
+    # ---- 责任归属 ----
+    add("## 四、这些消耗里，哪些是助手造成的")
+    add("")
+    add("来源类别回答「消耗在什么上」，这一节回答「谁造成的」。不分开，助手没照做、忘了、"
+        "擅自改动这些，就会被写成中性的「摩擦」，再变成用户该去优化的东西。")
+    add("")
+    actor_counts: Counter = Counter()
+    actor_evidence: dict[str, list[str]] = defaultdict(list)
+    total_pairs = 0
+    for h in fatigue + friction:
+        for p in h.get("source_quotes") or []:
+            label = p.get("label") or ""
+            if not label:
+                continue
+            total_pairs += 1
+            a = actor_of(label)
+            actor_counts[a] += 1
+            if len(actor_evidence[a]) < 3:
+                actor_evidence[a].append(scrub(p.get("quote") or ""))
+    add(f"分母：{total_pairs} 条「来源-证据」配对（疲劳 + 摩擦）。")
+    add("")
+    add("| 责任主体 | 条数 | 占比 |")
+    add("|---|---|---|")
+    for a, c in actor_counts.most_common():
+        add(f"| {a} | {c} | {c / max(1, total_pairs) * 100:.0f}% |")
+    add("")
+    assistant_side = sum(actor_counts.get(a, 0) for a in ASSISTANT_ACTORS)
+    if total_pairs:
+        add(f"**结论摆在这里：{assistant_side} 条（{assistant_side / total_pairs * 100:.0f}%）"
+            f"的消耗来自助手一侧**——其中「没照做、忘了、擅自改」"
+            f"{actor_counts.get(ASSISTANT_ACTORS[0], 0)} 条，"
+            f"「输出太复杂、看不懂」{actor_counts.get(ASSISTANT_ACTORS[1], 0)} 条。"
+            f"这部分不是用户该调节的东西，是要助手改的东西。")
+        add("")
+        for a in ASSISTANT_ACTORS:
+            for q in actor_evidence.get(a, [])[:2]:
+                add(f"- 「{q}」")
+        add("")
+
     # ---- 摩擦与疲劳的关系 ----
-    add("## 四、摩擦是不是疲劳的上游（共现检验）")
+    add("## 五、摩擦是不是疲劳的上游（共现检验）")
     add("")
     days_any = Counter(a.get("date") for a in annotations)
     days_f = Counter(a.get("date") for a in fatigue)
@@ -140,7 +179,7 @@ def build(annotations: list[dict], total_user_msgs: int, rest_pool_size: int,
     add("")
 
     # ---- 时间分布 ----
-    add("## 五、时间分布（疲劳命中）")
+    add("## 六、时间分布（疲劳命中）")
     add("")
     add(f"分母：{len(fatigue)} 条疲劳命中。")
     add("")
@@ -159,7 +198,7 @@ def build(annotations: list[dict], total_user_msgs: int, rest_pool_size: int,
         add("")
 
     # ---- 自检 ----
-    add("## 六、口径自检（决定上面那些能不能信）")
+    add("## 七、口径自检（决定上面那些能不能信）")
     add("")
     add("| 检查 | 结果 |")
     add("|---|---|")
@@ -179,7 +218,7 @@ def build(annotations: list[dict], total_user_msgs: int, rest_pool_size: int,
             add(f"| 　例 | 「{scrub((p.get('quotes') or [p.get('content', '')[:30]])[0])}」 |")
     add("")
 
-    add("## 七、这份报告自带哪些偏差")
+    add("## 八、这份报告自带哪些偏差")
     add("")
     add("- 语料只有与 AI 的对话：与人当面聊的、会议上说的，不在这里面。")
     add("- 单模型单次判定，无第二人复核；来源短语是模型的概括，是「值得核对的假设」，不是因果证明。")
@@ -190,7 +229,7 @@ def build(annotations: list[dict], total_user_msgs: int, rest_pool_size: int,
     add("- 时间分布按消息发出时间算，不代表疲劳发生在那一刻。")
     add("")
     if conclusion:
-        add("## 八、结论")
+        add("## 九、结论")
         add("")
         add(conclusion.strip())
         add("")

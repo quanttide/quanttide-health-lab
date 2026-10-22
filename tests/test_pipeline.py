@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fatigue_sources.labels import canonical
+from fatigue_sources.labels import actor_of, canonical
 from fatigue_sources.llm import parse_items
 from fatigue_sources.sanitize import scrub
 from fatigue_sources.screen import screen
@@ -107,6 +107,24 @@ class TestSanitize(unittest.TestCase):
         self.assertNotIn("gsk_abcdefgh12345678", out)
         self.assertNotIn("a@b.com", out)
         self.assertIn("已隐去", out)
+
+
+class TestActor(unittest.TestCase):
+    """责任主体轴：不能把自己（助手）藏进中性词里。"""
+
+    def test_assistant_side(self):
+        self.assertEqual(actor_of("同一件事已经说过又被漏掉"), "助手没照做、擅自改、忘了")
+        self.assertEqual(actor_of("被替做决定"), "助手没照做、擅自改、忘了")
+
+    def test_assistant_verbose(self):
+        self.assertEqual(actor_of("名词密度极高且不解释"), "助手输出太复杂、看不懂")
+
+    def test_other_sides(self):
+        self.assertEqual(actor_of("客户信息接不上"), "外部条件（数据、通道、他人）")
+        self.assertEqual(actor_of("两件事同时推进"), "用户自己这边（目标未定、取舍未决）")
+
+    def test_unclear_not_forced(self):
+        self.assertEqual(actor_of("玩家只能随便选"), "双方共有或不明")
 
 
 if __name__ == "__main__":
