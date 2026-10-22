@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .labels import actor_of, canonical
+from .labels import canonical
 from .sanitize import scrub
 
 CST = timezone(timedelta(hours=8))
@@ -121,70 +121,55 @@ def build(annotations: list[dict], total_user_msgs: int, rest_pool_size: int,
     _source_table(L, "三、摩擦来源（烦、返工、失控感，按命中条数排序）", friction,
                   "看这一节：这些消耗的是耐性，不是体力。它们常是疲劳的上游。")
 
-    # ---- 责任归属 ----
-    add("## 四、这些消耗里，哪些是助手造成的")
+    # ---- 责任归属（责任全部在助手一侧，只分环节）----
+    add("## 四、这些消耗落在我的哪个环节")
     add("")
-    add("来源类别回答「消耗在什么上」，这一节回答「谁造成的」。不分开，助手没照做、忘了、"
-        "擅自改动、把东西写得太密这些，就会被写成中性的「摩擦」和「理解成本」，"
-        "再变成用户该去优化的东西。")
+    add("口径是定死的：**责任全部在我这一侧，没有一条推给你，也不用「客观条件」「双方都有」含糊。**"
+        "这一节不问「谁的错」，只问「落在我哪个环节」——因为我负责把判据摆出来、把输出降到能判、"
+        "把说过的记住、把选项收敛到能拍、把外部条件的坑先探掉。")
     add("")
-    add("归属由模型逐条读原句判（`attribute.py`），不靠关键词表：第一版用关键词，实测 14 条里 9 条判错，"
-        "而且错得有方向——「我对你的工作方向表示怀疑」被判成「用户目标未定」，"
-        "「技术细节和数据太多」被判成「用户同时推进太多」。他抱怨助手时用的正是这些词。")
+    add("归属逐条读原句判（`attribute.py`），每条必须带一句判据。早期版本试过四选一"
+        "（助手／用户／外部／不明），会把「我对你的工作方向表示怀疑」判成「用户目标未定」——"
+        "把我自己摘出去，这一版已经删掉那条路。")
     add("")
-
-    actor_index = {a["id"]: a for a in (actors or [])}
-    counts_by_actor: Counter = Counter()
-    reasons: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    stage_index = {a["id"]: a for a in (actors or [])}
+    counts_by_stage: Counter = Counter()
+    stage_examples: dict[str, list[tuple[str, str]]] = defaultdict(list)
     total_pairs = 0
-    by_keyword = 0
+    missing_attr = 0
     for h in fatigue + friction:
-        for p in h.get("source_quotes") or []:
-            label = p.get("label") or ""
+        for p_ in h.get("source_quotes") or []:
+            label = p_.get("label") or ""
             if not label:
                 continue
             total_pairs += 1
-            quote = scrub(p.get("quote") or "")
-            rec = actor_index.get(f'{h.get("msg_id")}::{label}')
-            if rec:
-                a = rec.get("actor") or "不明"
+            quote = scrub(p_.get("quote") or "")
+            rec = stage_index.get(f'{h.get("msg_id")}::{label}')
+            if rec and rec.get("stage"):
+                stage = rec["stage"]
                 reason = rec.get("reason") or ""
             else:
-                a = actor_of(label)
-                reason = "（关键词兜底）"
-                by_keyword += 1
-            counts_by_actor[a] += 1
-            # 「用户」那一组全列出来：这一轴被质疑过，只给三条样例等于不给核
-            cap = 20 if a == "用户" else 3
-            if len(reasons[a]) < cap:
-                reasons[a].append((quote, reason))
+                stage = "C 没给判据、没法验证"
+                reason = "（未判定，按「没让人能判断」记在助手一侧）"
+                missing_attr += 1
+            counts_by_stage[stage] += 1
+            if len(stage_examples[stage]) < 3:
+                stage_examples[stage].append((quote, reason))
 
-    add(f"分母：{total_pairs} 条「来源-证据」配对（疲劳 + 摩擦）。")
-    if by_keyword:
-        add(f"其中 {by_keyword} 条没有模型判定、用了关键词兜底，可信度低于其余（先跑 `attribute` 再出报告）。")
+    add(f"分母：{total_pairs} 条「来源-证据」配对（疲劳 + 摩擦），全部记在助手一侧。")
+    if missing_attr:
+        add(f"其中 {missing_attr} 条没有模型判定，按「没让人能判断」计入——先跑 `attribute` 再出报告。")
     add("")
-    add("| 责任主体 | 条数 | 占比 |")
+    add("| 环节 | 条数 | 占比 |")
     add("|---|---|---|")
-    for a, c in counts_by_actor.most_common():
-        add(f"| {a} | {c} | {c / max(1, total_pairs) * 100:.0f}% |")
+    for s, c in counts_by_stage.most_common():
+        add(f"| {s} | {c} | {c / max(1, total_pairs) * 100:.0f}% |")
     add("")
-    if total_pairs:
-        add(f"**{counts_by_actor.get('助手', 0)} 条（{counts_by_actor.get('助手', 0) / total_pairs * 100:.0f}%）"
-            f"的消耗记在助手头上，"
-            f"{counts_by_actor.get('用户', 0)} 条（{counts_by_actor.get('用户', 0) / total_pairs * 100:.0f}%）"
-            f"在用户自己这边。** 判据逐条列在下面，能对回原话。")
+    for s, c in counts_by_stage.most_common():
+        add(f"**{s}**（{c} 条）——举例与判据：")
         add("")
-    for a in ("助手", "用户", "外部"):
-        if not reasons.get(a):
-            continue
-        add(f"**{a}**（每条的判据都在括号里）：")
-        add("")
-        for quote, reason in reasons[a]:
+        for quote, reason in stage_examples[s]:
             add(f"- 「{quote}」　_{reason or '未给判据'}_")
-        add("")
-    unclear = counts_by_actor.get("不明", 0)
-    if unclear:
-        add(f"另有 {unclear} 条判为「不明」——两边都指、或判不出，不硬派。")
         add("")
 
     # ---- 摩擦与疲劳的关系 ----
