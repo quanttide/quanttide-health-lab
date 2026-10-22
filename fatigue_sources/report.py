@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .labels import ASSISTANT_ACTORS, actor_of, canonical
+from .labels import actor_of, canonical
 from .sanitize import scrub
 
 CST = timezone(timedelta(hours=8))
@@ -80,7 +80,8 @@ def _source_table(L: list[str], title: str, hits: list[dict], hint: str) -> None
 
 
 def build(annotations: list[dict], total_user_msgs: int, rest_pool_size: int,
-          probe: list[dict] | None = None, conclusion: str = "") -> str:
+          probe: list[dict] | None = None, conclusion: str = "",
+          actors: list[dict] | None = None) -> str:
     def sig(a):
         return a.get("signal") or ("fatigue" if a.get("fatigue") else "")
 
@@ -124,39 +125,66 @@ def build(annotations: list[dict], total_user_msgs: int, rest_pool_size: int,
     add("## 四、这些消耗里，哪些是助手造成的")
     add("")
     add("来源类别回答「消耗在什么上」，这一节回答「谁造成的」。不分开，助手没照做、忘了、"
-        "擅自改动这些，就会被写成中性的「摩擦」，再变成用户该去优化的东西。")
+        "擅自改动、把东西写得太密这些，就会被写成中性的「摩擦」和「理解成本」，"
+        "再变成用户该去优化的东西。")
     add("")
-    actor_counts: Counter = Counter()
-    actor_evidence: dict[str, list[str]] = defaultdict(list)
+    add("归属由模型逐条读原句判（`attribute.py`），不靠关键词表：第一版用关键词，实测 14 条里 9 条判错，"
+        "而且错得有方向——「我对你的工作方向表示怀疑」被判成「用户目标未定」，"
+        "「技术细节和数据太多」被判成「用户同时推进太多」。他抱怨助手时用的正是这些词。")
+    add("")
+
+    actor_index = {a["id"]: a for a in (actors or [])}
+    counts_by_actor: Counter = Counter()
+    reasons: dict[str, list[tuple[str, str]]] = defaultdict(list)
     total_pairs = 0
+    by_keyword = 0
     for h in fatigue + friction:
         for p in h.get("source_quotes") or []:
             label = p.get("label") or ""
             if not label:
                 continue
             total_pairs += 1
-            a = actor_of(label)
-            actor_counts[a] += 1
-            if len(actor_evidence[a]) < 3:
-                actor_evidence[a].append(scrub(p.get("quote") or ""))
+            quote = scrub(p.get("quote") or "")
+            rec = actor_index.get(f'{h.get("msg_id")}::{label}')
+            if rec:
+                a = rec.get("actor") or "不明"
+                reason = rec.get("reason") or ""
+            else:
+                a = actor_of(label)
+                reason = "（关键词兜底）"
+                by_keyword += 1
+            counts_by_actor[a] += 1
+            # 「用户」那一组全列出来：这一轴被质疑过，只给三条样例等于不给核
+            cap = 20 if a == "用户" else 3
+            if len(reasons[a]) < cap:
+                reasons[a].append((quote, reason))
+
     add(f"分母：{total_pairs} 条「来源-证据」配对（疲劳 + 摩擦）。")
+    if by_keyword:
+        add(f"其中 {by_keyword} 条没有模型判定、用了关键词兜底，可信度低于其余（先跑 `attribute` 再出报告）。")
     add("")
     add("| 责任主体 | 条数 | 占比 |")
     add("|---|---|---|")
-    for a, c in actor_counts.most_common():
+    for a, c in counts_by_actor.most_common():
         add(f"| {a} | {c} | {c / max(1, total_pairs) * 100:.0f}% |")
     add("")
-    assistant_side = sum(actor_counts.get(a, 0) for a in ASSISTANT_ACTORS)
     if total_pairs:
-        add(f"**结论摆在这里：{assistant_side} 条（{assistant_side / total_pairs * 100:.0f}%）"
-            f"的消耗来自助手一侧**——其中「没照做、忘了、擅自改」"
-            f"{actor_counts.get(ASSISTANT_ACTORS[0], 0)} 条，"
-            f"「输出太复杂、看不懂」{actor_counts.get(ASSISTANT_ACTORS[1], 0)} 条。"
-            f"这部分不是用户该调节的东西，是要助手改的东西。")
+        add(f"**{counts_by_actor.get('助手', 0)} 条（{counts_by_actor.get('助手', 0) / total_pairs * 100:.0f}%）"
+            f"的消耗记在助手头上，"
+            f"{counts_by_actor.get('用户', 0)} 条（{counts_by_actor.get('用户', 0) / total_pairs * 100:.0f}%）"
+            f"在用户自己这边。** 判据逐条列在下面，能对回原话。")
         add("")
-        for a in ASSISTANT_ACTORS:
-            for q in actor_evidence.get(a, [])[:2]:
-                add(f"- 「{q}」")
+    for a in ("助手", "用户", "外部"):
+        if not reasons.get(a):
+            continue
+        add(f"**{a}**（每条的判据都在括号里）：")
+        add("")
+        for quote, reason in reasons[a]:
+            add(f"- 「{quote}」　_{reason or '未给判据'}_")
+        add("")
+    unclear = counts_by_actor.get("不明", 0)
+    if unclear:
+        add(f"另有 {unclear} 条判为「不明」——两边都指、或判不出，不硬派。")
         add("")
 
     # ---- 摩擦与疲劳的关系 ----

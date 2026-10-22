@@ -199,6 +199,49 @@ def parse_items(text: str, expected_ids: list[str]) -> tuple[dict, list[str]]:
     return out, fails
 
 
+def parse_actors(text: str, expected_ids: list[str]) -> tuple[dict, list[str]]:
+    """解析责任归属输出。返回 ({id: {actor, reason}}, 失败说明)。"""
+    out: dict[str, dict] = {}
+    blocks = _json_blocks(text)
+    if not blocks:
+        return {}, ["输出里没有可解析的 JSON"]
+    items: list = []
+    for block in blocks:
+        items.extend(block if isinstance(block, list) else [block])
+    alias_actor = {
+        "助手": "助手", "assistant": "助手", "ai": "助手", "模型": "助手", "系统": "助手",
+        "用户": "用户", "user": "用户", "说话人": "用户", "本人": "用户",
+        "外部": "外部", "external": "外部", "环境": "外部", "第三方": "外部",
+    }
+    for obj in items:
+        if not isinstance(obj, dict):
+            continue
+        iid = None
+        for k in ("id", "编号", "item"):
+            if k in obj:
+                iid = str(obj[k]).strip()
+                break
+        actor_raw = ""
+        for k in ("actor", "责任", "归属", "谁", "责任主体"):
+            if obj.get(k):
+                actor_raw = str(obj[k]).strip()
+                break
+        reason = ""
+        for k in ("reason", "判据", "依据", "理由"):
+            if obj.get(k):
+                reason = str(obj[k]).strip()
+                break
+        actor = alias_actor.get(actor_raw.lower(), "") or alias_actor.get(actor_raw, "")
+        if not actor:
+            actor = "不明"
+        if iid is None or iid not in expected_ids:
+            continue
+        out[iid] = {"actor": actor, "reason": reason}
+    missing = [i for i in expected_ids if i not in out]
+    fails = [f"未返回 {len(missing)} 条：{', '.join(missing[:3])}"] if missing else []
+    return out, fails
+
+
 def _json_blocks(text: str) -> list:
     """取出文本里所有完整的 JSON 块（数组或对象）。
 

@@ -15,6 +15,7 @@ import random
 from pathlib import Path
 
 from . import annotate as annotate_mod
+from . import attribute as attribute_mod
 from . import corpus, report as report_mod
 from .screen import screen as screen_fn
 
@@ -25,6 +26,7 @@ CANDS = DATA / "candidates.jsonl"
 REST = DATA / "rest_pool.jsonl"
 ANNOT = DATA / "annotations.jsonl"
 PROBE = DATA / "probe.jsonl"
+ACTORS = DATA / "actors.jsonl"
 
 
 def cmd_extract(args) -> None:
@@ -62,6 +64,17 @@ def cmd_probe(args) -> None:
     annotate_mod.annotate(sample, PROBE, batch_size=args.batch, workers=args.workers)
 
 
+def cmd_attribute(args) -> None:
+    anns = corpus.read_jsonl(ANNOT)
+    if not anns:
+        raise SystemExit("没有标注数据，先跑 annotate")
+    items = attribute_mod.collect(anns)
+    if not items:
+        raise SystemExit("标注里没有可归属的来源条目")
+    attribute_mod.attribute(items, ACTORS, batch_size=args.batch, workers=args.workers,
+                            limit=args.limit)
+
+
 def cmd_report(args) -> None:
     anns = corpus.read_jsonl(ANNOT)
     if not anns:
@@ -69,8 +82,9 @@ def cmd_report(args) -> None:
     msgs = corpus.read_jsonl(MESSAGES)
     rest = corpus.read_jsonl(REST)
     probe = corpus.read_jsonl(PROBE)
+    actors = corpus.read_jsonl(ACTORS)
     conclusion = Path(args.conclusion).read_text(encoding="utf-8") if args.conclusion else ""
-    text = report_mod.build(anns, len(msgs), len(rest), probe, conclusion)
+    text = report_mod.build(anns, len(msgs), len(rest), probe, conclusion, actors)
     out = REPORTS / f"{args.name or 'fatigue-sources'}.md"
     report_mod.write(text, out)
     print(f"报告 → {out}（命中 {sum(1 for a in anns if a.get('fatigue'))}/{len(anns)}）")
@@ -80,6 +94,7 @@ def cmd_run(args) -> None:
     cmd_extract(args)
     cmd_screen(args)
     cmd_annotate(args)
+    cmd_attribute(args)
     if args.probe:
         cmd_probe(args)
     cmd_report(args)
@@ -101,7 +116,7 @@ def main(argv=None) -> None:
         p.add_argument("--conclusion", default=None, help="结论文件的路径，拼进报告")
         p.add_argument("--name", default=None, help="报告文件名（不含扩展名）")
 
-    for name in ("extract", "screen", "annotate", "probe", "report", "run"):
+    for name in ("extract", "screen", "annotate", "attribute", "probe", "report", "run"):
         p = sub.add_parser(name)
         common(p)
         p.set_defaults(func=globals()[f"cmd_{name}"])
