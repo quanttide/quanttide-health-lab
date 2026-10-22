@@ -1,0 +1,6 @@
+# 语料与产物留在本机，不入仓（隐私）
+data/
+reports/
+*.pyc
+__pycache__/
+.venv/

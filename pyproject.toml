@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fatigue-sources"
+version = "0.1.0"
+description = "从对话语料里定位疲劳信号，并按来源归因（附原文证据）"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+fatigue = "fatigue_sources.cli:main"
+
+[tool.setuptools]
+packages = ["fatigue_sources"]
